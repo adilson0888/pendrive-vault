@@ -84,8 +84,20 @@ sudo apt install python3-gi gir1.2-gtk-4.0 cryptsetup-bin libfido2-1 policykit-1
 
 ## Install
 
+From a release (recommended — the tarball is checksummed):
+
 ```bash
-git clone https://github.com/<you>/pendrive-vault.git
+curl -fsSLO https://github.com/adilson0888/pendrive-vault/releases/download/v0.1.0/pendrive-vault-0.1.0.tar.gz
+curl -fsSLO https://github.com/adilson0888/pendrive-vault/releases/download/v0.1.0/SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing
+tar xf pendrive-vault-0.1.0.tar.gz
+sudo ./pendrive-vault-0.1.0/install.sh
+```
+
+Or from git, if you want to follow `main`:
+
+```bash
+git clone https://github.com/adilson0888/pendrive-vault.git
 cd pendrive-vault
 sudo ./install.sh
 ```
@@ -264,12 +276,55 @@ with the documented exit codes. CI runs the same tests on every push.
 
 * `install.sh` understands `DESTDIR` and `PREFIX`, so it can stage files into a
   package root: `DESTDIR="$pkgdir" PREFIX=/usr ./install.sh`.
-* An AUR recipe lives in
-  [packaging/pendrive-vault-git/PKGBUILD](packaging/pendrive-vault-git/PKGBUILD).
+* Each release ships a checksummed source tarball plus `SHA256SUMS`.
+* An AUR recipe is kept in
+  [packaging/pendrive-vault-git/PKGBUILD](packaging/pendrive-vault-git/PKGBUILD)
+  (not submitted to the AUR yet).
+* `deb`/`rpm` recipes are welcome — the only thing that must happen
+  system-wide is installing the two executables under `libexec`, the polkit
+  policy, the desktop entry and the default config.
 
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md).
+
+## FAQ
+
+### Is there an AppImage, Flatpak or Snap?
+
+No, deliberately. Unlocking a LUKS2 volume is a system operation: the helper
+must run as root through `pkexec`, polkit only reads action files from
+`/usr/share/polkit-1/actions`, and the FIDO2 path is driven by the host's
+`cryptsetup` token handler. An AppImage mounts at a random `/tmp/.mount_*`
+path (so `pkexec` cannot match it) and is `nosuid`; Flatpak and Snap cannot
+provide the root helper at all. Bundling cryptsetup and libfido2 would also
+freeze the very crypto code that should come from your distribution.
+
+`install.sh` is three files, a polkit policy and a desktop entry — it already
+works on any distribution that has `cryptsetup`, `libfido2`, GTK4 and PyGObject.
+Distro packages are welcome; see [Packaging](#packaging).
+
+### Do I have to relabel my volume?
+
+Yes, once, and only the LUKS2 header is touched — no re-encryption:
+
+```bash
+sudo cryptsetup config --label PENDRIVE_VAULT /dev/sdX2
+```
+
+Without a label the app will not offer the volume, by design: it never guesses
+which encrypted device is "its".
+
+### Will this work without a FIDO2 key?
+
+Yes. The passphrase keyslot is independent, and the app offers both paths. If
+you only ever use the passphrase, skip `systemd-cryptenroll` entirely.
+
+### Is my PIN or passphrase stored anywhere?
+
+No. Both go to the helper on stdin, are passed to `cryptsetup`, and are never
+written to disk, argv or the environment. The FIDO2 PIN is additionally masked
+in anything the pty driver prints. See [SECURITY.md](SECURITY.md).
 
 ## Contributing
 
