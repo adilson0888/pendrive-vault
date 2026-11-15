@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-11-15
+
 ### Added
 
 - The drop-down now lists **every** LUKS2 USB volume, labelled or not, so a
@@ -62,5 +64,6 @@ First public release.
   devices that are not USB, not LUKS2, not labelled `MARKER`, or that hold the
   running root filesystem.
 
-[Unreleased]: https://github.com/adilson0888/pendrive-vault/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/adilson0888/pendrive-vault/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/adilson0888/pendrive-vault/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/adilson0888/pendrive-vault/releases/tag/v0.1.0
