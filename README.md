@@ -26,9 +26,11 @@ your normal file manager.
 
 ![Pendrive Vault main window](docs/screenshot.png)
 
-*Idle state: with no volume attached the buttons stay disabled. Once a volume
-labelled `PENDRIVE_VAULT` is plugged in, the card shows the device, its size and
-whether a security key is detected, and the two unlock buttons become active.*
+*Idle state: with nothing attached the buttons stay disabled. Plug in an
+encrypted stick and it appears here with its model, size and whether a security
+key is detected — the drop-down appears when several are attached, and a stick
+used for the first time offers **Add this volume** instead of the unlock
+buttons.*
 
 ## Why this exists
 
@@ -119,7 +121,7 @@ Two equivalent alternatives, if you prefer to set it up ahead of time:
 
 ```bash
 # mark the volume itself (header metadata only, no re-encryption)
-sudo cryptsetup config --label PENDRIVE_VAULT /dev/sdb2
+sudo cryptsetup config --label PENDRIVE_VAULT /dev/sdX2
 
 # or pin one specific volume in the config
 sudo ./install.sh --uuid <uuid>
@@ -271,12 +273,13 @@ See [SECURITY.md](SECURITY.md) for the threat model and how to report issues.
 
 | Symptom | Likely cause |
 |---|---|
-| *No vault volume detected* | wrong/missing LUKS2 label — see `cryptsetup config --label`; or the volume is not on a USB disk |
+| *No encrypted USB volume detected* | the stick is not a LUKS2 volume on a USB disk, or it is not plugged in |
 | *The security key did not unlock the volume* | wrong PIN, or the key was not touched within ~30 s |
 | *security key not detected* | key not plugged in, or `fido2-token -L` cannot see it |
 | *Wrong passphrase* | keyslot mismatch — verify with `cryptsetup open --test-passphrase <device>` |
 | *The volume is already unlocked* | a mapping exists; press **Lock**, or `cryptsetup close pv-<uuid8>` |
-| *That device is not a Pendrive Vault volume* | the helper refused it: label mismatch, not USB, or it holds `/` |
+| *That device is not a LUKS2 volume on a USB disk* | the helper refused it: not LUKS2, not on USB, or it holds `/` |
+| *That volume is not managed by Pendrive Vault yet* | add it from the drop-down first |
 
 The log at `/run/pendrive-vault/last.log` contains the exact cryptsetup output of the
 last operation.
@@ -329,14 +332,20 @@ Distro packages are welcome; see [Packaging](#packaging).
 
 ### Do I have to relabel my volume?
 
-Yes, once, and only the LUKS2 header is touched — no re-encryption:
+No. Plug the stick in, pick it in the drop-down and click **Add this volume**;
+the UUID is remembered in `/etc/pendrive-vault.volumes` and nothing on the
+stick is modified.
+
+Labelling is the alternative, useful if you want the volume to be recognised on
+any machine without adding it first (header metadata only, no re-encryption):
 
 ```bash
 sudo cryptsetup config --label PENDRIVE_VAULT /dev/sdX2
 ```
 
-Without a label the app will not offer the volume, by design: it never guesses
-which encrypted device is "its".
+A third option is pinning one volume in `/etc/pendrive-vault.conf` with
+`UUID=…`. All three make a volume *managed*; none of them authenticates it —
+unlocking still needs your key or passphrase.
 
 ### Will this work without a FIDO2 key?
 

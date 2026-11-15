@@ -13,7 +13,10 @@ All notable changes to this project are documented here. The format follows
   volume"). The choice is remembered in `/etc/pendrive-vault.volumes`; the
   volume itself is not modified.
 - `adopt` action in the helper, with the same USB/LUKS2/root-disk validation as
-  unlocking.
+  unlocking; managed volumes are those carrying the `MARKER` label, pinned by
+  `UUID=` in the config, or listed in `/etc/pendrive-vault.volumes`.
+- Troubleshooting and FAQ now describe the add-from-the-UI flow, and the
+  helper's distinct `not-managed` error.
 
 ### Fixed
 
