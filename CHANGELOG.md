@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A `cryptsetup` that never returns (seen with a PIN shorter than the token's
+  minimum length) used to hang forever: it held the FIDO2 device and left the
+  window spinning, and because the app is single-instance, later clicks only
+  re-activated the stuck window. The pty driver now kills the child after
+  75 s, and the GUI kills the helper after 120 s, so an operation can never
+  wedge the app.
+- `tests/make_probe.py` keeps the driver tests honest by failing loudly if the
+  cryptsetup invocation changes, and a new test covers the hang above.
+
 ## [0.1.0] — 2026-11-15
 
 First public release.

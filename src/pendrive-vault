@@ -267,6 +267,19 @@ class Window(Gtk.ApplicationWindow):
 
         threading.Thread(target=work, daemon=True).start()
 
+        def watchdog():
+            # A wedged cryptsetup must never leave the window spinning forever.
+            proc = holder["proc"]
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                self._chunk("\nTimed out; stopped the operation.\n")
+            return False
+
+        GLib.timeout_add_seconds(120, watchdog)
+
     def _volumes_loaded(self, rows: list[Volume], err: str):
         self._listing = False
         titles = [v.title for v in rows]
@@ -499,6 +512,8 @@ class Window(Gtk.ApplicationWindow):
         self.hint_label.set_text(hint)
         self.render()
 
+        holder = {"proc": None}
+
         def work():
             code = 97
             try:
@@ -506,6 +521,7 @@ class Window(Gtk.ApplicationWindow):
                     ["pkexec", HELPER, action, uuid],
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT)
+                holder["proc"] = proc
                 try:
                     proc.stdin.write(secret.encode())
                     proc.stdin.close()
@@ -522,6 +538,19 @@ class Window(Gtk.ApplicationWindow):
             GLib.idle_add(self._finished, action, code)
 
         threading.Thread(target=work, daemon=True).start()
+
+        def watchdog():
+            # A wedged cryptsetup must never leave the window spinning forever.
+            proc = holder["proc"]
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                self._chunk("\nTimed out; stopped the operation.\n")
+            return False
+
+        GLib.timeout_add_seconds(120, watchdog)
 
     def _finished(self, action: str, code: int):
         self.busy = False

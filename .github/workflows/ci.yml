@@ -27,7 +27,7 @@ jobs:
         run: shellcheck -S warning install.sh uninstall.sh src/pendrive-vault-helper tests/*.sh
 
       - name: Python syntax
-        run: python3 -m py_compile src/pendrive-vault src/pendrive-vault-token
+        run: python3 -m py_compile src/pendrive-vault src/pendrive-vault-token tests/make_probe.py
 
       - name: Templates render valid XML / desktop entries
         run: |

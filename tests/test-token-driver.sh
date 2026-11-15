@@ -17,16 +17,9 @@ ok()   { printf '  ok    %s\n' "$1"; }
 bad()  { printf '  FAIL  %s\n' "$1"; fails=$((fails + 1)); }
 
 # Build a driver whose child command is replaced by $1 (a shell snippet).
+# Optional second argument shortens CHILD_TIMEOUT, for the hang test.
 make_probe() {
-  python3 - "$DRIVER" "$TMP/probe.py" "$1" <<'PY'
-import pathlib, sys
-src = pathlib.Path(sys.argv[1]).read_text()
-cmd = sys.argv[3]
-old = '["cryptsetup", "open", "--token-only", device, name]'
-assert old in src, "driver command line not found - update this test"
-new = f'["/bin/sh", "-c", {cmd!r}]'
-pathlib.Path(sys.argv[2]).write_text(src.replace(old, new))
-PY
+  python3 "$SRC/tests/make_probe.py" "$DRIVER" "$TMP/probe.py" "$1" "${2:-}"
 }
 
 echo "pty driver"
@@ -77,7 +70,19 @@ rc=$?
 if [ "$rc" -eq 42 ]; then
   ok "child exit status propagated"
 else
-  bad "child exit status not propagated"
+  bad "child exit status not propagated (rc=$rc)"
+fi
+
+# 6. A child that never returns is killed, so the app cannot hang forever.
+make_probe "printf 'Enter token PIN: '; read -r x; echo; sleep 30; echo never" 2
+start=$(date +%s)
+out="$(printf 'x\n' | python3 "$TMP/probe.py" /dev/null x 2>&1)"
+rc=$?
+elapsed=$(( $(date +%s) - start ))
+if [ "$rc" -eq 124 ] && [ "$elapsed" -lt 15 ] && grep -qi 'timed out' <<<"$out"; then
+  ok "hung child killed after the timeout (${elapsed}s, rc=$rc)"
+else
+  bad "timeout handling wrong (rc=$rc, ${elapsed}s)"
 fi
 
 echo

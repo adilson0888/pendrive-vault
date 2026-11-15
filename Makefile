@@ -24,7 +24,7 @@ uninstall:
 lint:
 	shellcheck -S warning install.sh uninstall.sh src/pendrive-vault-helper tests/*.sh
 	bash -n install.sh uninstall.sh src/pendrive-vault-helper tests/*.sh
-	python3 -m py_compile src/pendrive-vault src/pendrive-vault-token
+	python3 -m py_compile src/pendrive-vault src/pendrive-vault-token tests/make_probe.py
 	@echo "lint ok"
 
 test:
