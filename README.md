@@ -22,6 +22,14 @@ your normal file manager.
   └────────────────────────────────────┘
 ```
 
+## Screenshots
+
+![Pendrive Vault main window](docs/screenshot.png)
+
+*Idle state: with no volume attached the buttons stay disabled. Once a volume
+labelled `PENDRIVE_VAULT` is plugged in, the card shows the device, its size and
+whether a security key is detected, and the two unlock buttons become active.*
+
 ## Why this exists
 
 Linux desktops cannot unlock a FIDO2-protected LUKS2 volume from a GUI.
