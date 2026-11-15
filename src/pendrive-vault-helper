@@ -19,6 +19,7 @@
 set -euo pipefail
 
 CONFIG="/etc/pendrive-vault.conf"   # root-owned, never taken from the environment
+VOLUMES_FILE="/etc/pendrive-vault.volumes"  # extra UUIDs the user chose to manage
 LOG_DIR="/run/pendrive-vault"
 LOG="${LOG_DIR}/last.log"   # root-owned dir: cannot be pre-created as a symlink
 TOKEN_DRIVER="/usr/local/libexec/pendrive-vault-token"
@@ -86,18 +87,25 @@ holds_root() {
   [ -n "$root_disk" ] && [ "$root_disk" = "$disk" ]
 }
 
-# Does this partition look like one of *our* volumes?
-matches_marker() {
-  local dev="$1" uuid
-  uuid="$(blkid -s UUID -o value "$dev" 2>/dev/null || true)"
-  [ -n "$uuid" ] || return 1
-  [ -z "$PIN_UUID" ] || [ "$PIN_UUID" = "$uuid" ] || return 1
-  cryptsetup isLuks "$dev" 2>/dev/null || return 1
-  [ "$(luks_field "$dev" Version)" = "2" ] || return 1
-  [ "$(luks_field "$dev" Label)" = "$MARKER" ] || return 1
+# Could this partition be a vault at all? (device-side checks only)
+is_candidate() {
+  local dev="$1"
+  # Cheap, device-side checks first: never read the header of an internal disk.
+  [ -b "$dev" ] || return 1
   is_usb "$dev" || return 1
   holds_root "$dev" && return 1
+  cryptsetup isLuks "$dev" 2>/dev/null || return 1
+  [ "$(luks_field "$dev" Version)" = "2" ] || return 1
   return 0
+}
+
+# Has the user told us to manage it? (policy: label, UUID pin, or adopted)
+is_managed() {  # $1=uuid  $2=device
+  local uuid="$1" dev="$2"
+  [ -n "$PIN_UUID" ] && [ "$PIN_UUID" = "$uuid" ] && return 0
+  [ "$(luks_field "$dev" Label)" = "$MARKER" ] && return 0
+  [ -r "$VOLUMES_FILE" ] && grep -qxF -- "$uuid" "$VOLUMES_FILE" && return 0
+  return 1
 }
 
 candidates() {
@@ -154,7 +162,8 @@ resolve_validated() {
   [[ "$uuid" =~ $UUID_RE ]] || err "bad-uuid" 22
   DEV="/dev/disk/by-uuid/${uuid}"
   [ -b "$DEV" ] || err "device-not-found" 10
-  matches_marker "$DEV" || err "not-a-vault" 23
+  is_candidate "$DEV" || err "not-a-vault" 23
+  is_managed "$uuid" "$DEV" || err "not-managed" 25
 }
 
 # The two unlock providers set DEV/MAPPER and perform the cryptsetup call.
@@ -191,7 +200,7 @@ case "$ACTION" in
   list)
     while read -r dev; do
       [ -n "$dev" ] || continue
-      matches_marker "$dev" || continue
+      is_candidate "$dev" || continue
       uuid="$(blkid -s UUID -o value "$dev")"
       mapper="$(mapper_for "$uuid")"
       mnt="$(mountpoint_of "$mapper")"
@@ -199,8 +208,24 @@ case "$ACTION" in
       elif [ -b "/dev/mapper/${mapper}" ]; then state="unlocked"
       else state="locked"
       fi
-      printf '%s\t%s\t%s\t%s\n' "$uuid" "$dev" "$state" "$mnt"
+      if is_managed "$uuid" "$dev"; then managed=1; else managed=0; fi
+      printf '%s\t%s\t%s\t%s\t%s\n' "$uuid" "$dev" "$state" "$mnt" "$managed"
     done < <(candidates)
+    ;;
+
+  adopt)
+    uuid="${2:-}"
+    [[ "$uuid" =~ $UUID_RE ]] || err "bad-uuid" 22
+    DEV="/dev/disk/by-uuid/${uuid}"
+    [ -b "$DEV" ] || err "device-not-found" 10
+    is_candidate "$DEV" || err "not-a-vault" 23
+    if is_managed "$uuid" "$DEV"; then echo "ok:already-managed"; exit 0; fi
+    if [ ! -e "$VOLUMES_FILE" ]; then
+      printf '# Volumes managed by Pendrive Vault (one UUID per line).\n' > "$VOLUMES_FILE"
+      chmod 644 "$VOLUMES_FILE"
+    fi
+    printf '%s\n' "$uuid" >> "$VOLUMES_FILE"
+    echo "ok:adopted"
     ;;
 
   unlock-fido2|unlock-passphrase)

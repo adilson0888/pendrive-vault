@@ -97,7 +97,9 @@ fi
 
 if [ -z "$DESTDIR" ]; then
   echo
-  echo "Volumes are detected by their LUKS2 label. Mark an existing volume with:"
+  echo "Next: plug the stick in and launch pendrive-vault — it lists every LUKS2"
+  echo "USB volume and offers an 'Add this volume' button."
+  echo "Alternatively, mark a volume with its LUKS2 label:"
   echo "   sudo cryptsetup config --label $MARKER /dev/sdX2"
   echo "   (header metadata only: no re-encryption, data area untouched)"
   [ -n "$PIN_UUID" ] && echo "Pinned to UUID: $PIN_UUID"

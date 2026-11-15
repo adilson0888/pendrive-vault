@@ -40,8 +40,8 @@ ERRORS = {
     "umount-failed": "Could not unmount — a file may still be open in another app.",
     "close-failed": "Could not lock the volume.",
     "open-failed": "The volume could not be opened.",
-    "not-a-vault": "That device is not a Pendrive Vault volume\n"
-                   "(wrong LUKS2 label, not USB, or not the configured volume).",
+    "not-a-vault": "That device is not a LUKS2 volume on a USB disk.",
+    "not-managed": "That volume is not managed by Pendrive Vault yet.",
     "bad-uuid": "Invalid volume identifier.",
     "not-root": "The helper was not started with privileges.",
     "no-caller": "Could not determine the calling user.",
@@ -110,10 +110,12 @@ def key_present() -> bool:
 
 
 class Volume:
-    __slots__ = ("uuid", "dev", "state", "mount")
+    __slots__ = ("uuid", "dev", "state", "mount", "managed")
 
-    def __init__(self, uuid: str, dev: str, state: str, mount: str):
+    def __init__(self, uuid: str, dev: str, state: str, mount: str,
+                 managed: bool = True):
         self.uuid, self.dev, self.state, self.mount = uuid, dev, state, mount
+        self.managed = managed
 
     @property
     def title(self) -> str:
@@ -201,6 +203,13 @@ class Window(Gtk.ApplicationWindow):
         self.lock_btn.add_css_class("destructive-action")
         self.lock_btn.connect("clicked", self.on_lock)
 
+        self.add_btn = Gtk.Button(label="Add this volume")
+        self.add_btn.add_css_class("suggested-action")
+        self.add_btn.set_size_request(-1, 38)
+        self.add_btn.set_visible(False)
+        self.add_btn.connect("clicked", self.on_add)
+
+        root.append(self.add_btn)
         root.append(self.fido_btn)
         root.append(self.pass_btn)
 
@@ -258,8 +267,10 @@ class Window(Gtk.ApplicationWindow):
                 for line in res.stdout.splitlines():
                     parts = line.split("\t")
                     if len(parts) >= 3:
-                        rows.append(Volume(parts[0], parts[1], parts[2],
-                                           parts[3] if len(parts) > 3 else ""))
+                        rows.append(Volume(
+                            parts[0], parts[1], parts[2],
+                            parts[3] if len(parts) > 3 else "",
+                            (parts[4] if len(parts) > 4 else "1") == "1"))
                 err = res.stdout if res.returncode else ""
             except (OSError, subprocess.SubprocessError) as exc:
                 rows, err = [], str(exc)
@@ -282,9 +293,9 @@ class Window(Gtk.ApplicationWindow):
 
     def _volumes_loaded(self, rows: list[Volume], err: str):
         self._listing = False
-        titles = [v.title for v in rows]
+        titles = [v.title + ("" if v.managed else "  ·  not added") for v in rows]
         if len(titles) != len(set(titles)):  # identical sticks
-            titles = [f"{v.title} · {v.uuid[:8]}" for v in rows]
+            titles = [f"{t} · {v.uuid[:8]}" for t, v in zip(titles, rows)]
 
         keep = self.selected().uuid if self.volumes and self.selected() else None
         self.volumes = rows
@@ -309,15 +320,19 @@ class Window(Gtk.ApplicationWindow):
     def render(self):
         vol = self.selected()
         if vol is None:
-            self.state_label.set_text("No vault volume detected")
+            self.state_label.set_text("No encrypted USB volume detected")
             self.detail_label.set_text(
-                "Plug in a LUKS2 volume labelled PENDRIVE_VAULT.\n"
-                "This window updates by itself.")
+                "Plug in a LUKS2 encrypted stick; this window updates by itself.")
             for btn in (self.fido_btn, self.pass_btn, self.open_btn, self.lock_btn):
                 btn.set_sensitive(False)
             return
 
-        if vol.state == "mounted":
+        if not vol.managed:
+            self.state_label.set_text("Not added yet")
+            self.detail_label.set_text(
+                f"{vol.title}\nAdd this volume to Pendrive Vault to unlock it here. "
+                "It is remembered on this machine; the volume itself is not modified.")
+        elif vol.state == "mounted":
             self.state_label.set_text("Unlocked and mounted")
             self.detail_label.set_text(f"{vol.title}\n{vol.mount}")
         elif vol.state == "unlocked":
@@ -328,7 +343,9 @@ class Window(Gtk.ApplicationWindow):
             key = "security key detected" if key_present() else "security key not detected"
             self.detail_label.set_text(f"{vol.title} · {key}")
 
-        can_unlock = vol.state == "locked" and not self.busy
+        can_unlock = vol.managed and vol.state == "locked" and not self.busy
+        self.add_btn.set_visible(not vol.managed)
+        self.add_btn.set_sensitive(not vol.managed and not self.busy)
         self.fido_btn.set_sensitive(can_unlock)
         self.pass_btn.set_sensitive(can_unlock)
         self.open_btn.set_sensitive(vol.state == "mounted")
@@ -494,6 +511,11 @@ class Window(Gtk.ApplicationWindow):
 
         self.ask("Passphrase", "Enter the passphrase for the encrypted volume.", go)
 
+    def on_add(self, *_):
+        vol = self.selected()
+        if vol:
+            self._run("adopt", vol.uuid, "", "Adding volume…")
+
     def on_lock(self, *_):
         vol = self.selected()
         if vol:
@@ -560,8 +582,11 @@ class Window(Gtk.ApplicationWindow):
         self.refresh_volumes(force=True)
 
         if code == 0:
-            self.hint_label.set_text("Unlocked — opening folder…"
-                                     if action.startswith("unlock") else "Locked.")
+            if action == "adopt":
+                self.hint_label.set_text("Volume added — you can unlock it now.")
+            else:
+                self.hint_label.set_text("Unlocked — opening folder…"
+                                         if action.startswith("unlock") else "Locked.")
             if action.startswith("unlock"):
                 vol = self.selected()
                 if vol and vol.state == "mounted":

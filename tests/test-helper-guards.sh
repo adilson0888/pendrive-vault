@@ -50,6 +50,8 @@ echo "helper guards"
 expect "unknown action refused"             2  bad-action       definitely-not-an-action
 expect "malformed uuid refused"            22  bad-uuid         unlock-passphrase not-a-uuid
 expect "unknown volume refused"            10  device-not-found unlock-passphrase 11111111-2222-3333-4444-555555555555
+expect "adopt: malformed uuid refused"     22  bad-uuid         adopt not-a-uuid
+expect "adopt: unknown volume refused"     10  device-not-found adopt 11111111-2222-3333-4444-555555555555
 
 # list must succeed even with no vault attached
 out="$(run list)"; rc=$?

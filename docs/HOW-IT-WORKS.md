@@ -32,25 +32,39 @@ The GUI never touches a block device and never mounts anything itself.
 ## Discovery
 
 1. The GUI probes `lsblk` (unprivileged) only to notice plug/unplug events.
-2. The helper enumerates partitions with `FSTYPE=crypto_LUKS` and keeps those
-   that pass **all** of these checks:
+2. The helper enumerates partitions with `FSTYPE=crypto_LUKS` and keeps the
+   **candidates** that pass the device-side checks:
 
    * it is a block device with a UUID,
-   * `cryptsetup isLuks` succeeds and `Version:` is `2`,
-   * the LUKS2 `Label:` equals `MARKER` (default `PENDRIVE_VAULT`),
    * its parent disk has `TRAN=usb`,
-   * the disk does not hold the running root filesystem.
+   * the disk does not hold the running root filesystem,
+   * `cryptsetup isLuks` succeeds and `Version:` is `2`.
 
-3. Each match is reported as `<uuid>\t<device>\t<state>\t<mountpoint>` and the
-   GUI renders the list. With one volume the selector is hidden.
+3. A candidate is **managed** when any of these hold:
+
+   * its LUKS2 `Label:` equals `MARKER` (default `PENDRIVE_VAULT`),
+   * its UUID is pinned in `/etc/pendrive-vault.conf` (`UUID=`),
+   * its UUID is listed in `/etc/pendrive-vault.volumes`, the file the GUI
+     writes through the `adopt` action when the user clicks **Add this
+     volume**.
+
+4. Each candidate is reported as
+   `<uuid>\t<device>\t<state>\t<mountpoint>\t<managed>` and the GUI renders
+   the list, marking unmanaged ones with "not added" and offering the Add
+   button instead of the unlock buttons.
+
+Unlocking requires *managed* **and** candidate: `ERR:not-managed 25` is
+returned for a volume the user has not added, `ERR:not-a-vault 23` for
+something that is not a LUKS2 USB volume at all.
 
 Why the helper and not the GUI? Reading a LUKS2 header needs root. Doing the
 detection inside the privileged process also means the GUI cannot *choose* an
 arbitrary device: it can only name a UUID, and the helper re-validates it on
-every call.
+every call. `adopt` therefore only accepts devices that already pass the
+candidate checks, and it grants no access by itself.
 
-Note that the label is a **selector, not an authenticator** — anyone can label
-a LUKS2 volume `PENDRIVE_VAULT`. Access is still gated by the keyslots.
+Neither the label nor the list authenticates anything — both are selectors.
+Access is always gated by the keyslots.
 
 ## Unlocking with a passphrase
 
@@ -140,7 +154,8 @@ mount -o uid=<caller>,gid=<caller>,umask=077 /dev/mapper/pv-<uuid8> /run/media/<
 
 | Helper output | Meaning |
 |---|---|
-| `ERR:not-a-vault 23` | label/format/USB/root-disk validation failed |
+| `ERR:not-a-vault 23` | not LUKS2, not on USB, or on the root disk |
+| `ERR:not-managed 25` | the volume has not been added to Pendrive Vault |
 | `ERR:device-not-found 10` | the volume is not plugged in |
 | `ERR:already-unlocked 11` | a mapping for this UUID exists; use Lock |
 | `ERR:fido2-failed 12` | PIN rejected, key not touched, or key removed |

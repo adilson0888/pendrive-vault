@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- The drop-down now lists **every** LUKS2 USB volume, labelled or not, so a
+  fresh stick can be picked and added from the UI with one click ("Add this
+  volume"). The choice is remembered in `/etc/pendrive-vault.volumes`; the
+  volume itself is not modified.
+- `adopt` action in the helper, with the same USB/LUKS2/root-disk validation as
+  unlocking.
+
 ### Fixed
 
 - A `cryptsetup` that never returns (seen with a PIN shorter than the token's

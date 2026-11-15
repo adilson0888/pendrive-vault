@@ -51,11 +51,11 @@ helper that runs the privileged bits.
 
 ## Features
 
-* **Volume discovery** — no UUID baked in: every USB LUKS2 partition whose
-  LUKS2 label is `PENDRIVE_VAULT` is offered, automatically, as it is plugged
-  in.
-* **Several volumes at once** — a selector appears when more than one is
-  attached.
+* **Pick your volume in the UI** — every encrypted USB stick shows up in a
+  drop-down, labelled or not; the first time you use one, add it with a single
+  click and it is remembered. No UUID is baked into the code.
+* **Several volumes at once** — the drop-down appears whenever more than one
+  is attached, and each keeps its own state.
 * Unlock with a **FIDO2 key**: FIDO2 PIN + physical touch, via
   `systemd-fido2` LUKS2 tokens (hmac-secret is never re-implemented).
 * Unlock with the **passphrase** keyslot, for when the key is not at hand.
@@ -110,11 +110,19 @@ cd pendrive-vault
 sudo ./install.sh
 ```
 
-Then mark the volumes you want it to manage — this writes only the LUKS2 label
-in the header — no re-encryption, and the encrypted payload is untouched:
+Then plug the stick in and launch the app: it lists every LUKS2 USB volume it
+can see, and offers **Add this volume** for the one you want it to manage. The
+choice is stored in `/etc/pendrive-vault.volumes`; nothing on the stick is
+modified.
+
+Two equivalent alternatives, if you prefer to set it up ahead of time:
 
 ```bash
+# mark the volume itself (header metadata only, no re-encryption)
 sudo cryptsetup config --label PENDRIVE_VAULT /dev/sdb2
+
+# or pin one specific volume in the config
+sudo ./install.sh --uuid <uuid>
 ```
 
 Launch **Pendrive Vault** from the application menu, or run `pendrive-vault`.
@@ -157,7 +165,10 @@ sudo cryptsetup luksDump /dev/sdb2 | sed -n '/Tokens:/,$p'
 | **Details** | live cryptsetup output, for troubleshooting |
 
 The state reloads itself every 1.5 s, so plugging a volume in or out needs no
-interaction. With several volumes attached, pick one in the drop-down.
+interaction. With several attached, pick one in the drop-down; if the selected
+volume has never been used with Pendrive Vault, the window offers
+**Add this volume** instead of the unlock buttons, and remembers it from then
+on (edit `/etc/pendrive-vault.volumes` as root to forget one).
 
 The mount point is `/run/media/<user>/<filesystem-label>` (so a FAT32 label
 `DATA` gives `/run/media/<user>/DATA`), falling back to `VAULT` when the
@@ -209,10 +220,10 @@ The helper is not a generic root tool. It:
 * reads a **root-owned** config (`/etc/pendrive-vault.conf`), so an unprivileged
   user cannot point it at another device;
 * accepts only a UUID argument and then re-validates it: must be a block
-  device, LUKS2, labelled with `MARKER`, on a USB disk, and must not hold the
-  running root filesystem;
-* offers only four actions (`list`, `unlock-fido2`, `unlock-passphrase`,
-  `lock`);
+  device, LUKS2, on a USB disk, not hold the running root filesystem, and be
+  managed (label, `UUID=` pin, or added from the UI);
+* offers only five actions (`list`, `adopt`, `unlock-fido2`,
+  `unlock-passphrase`, `lock`);
 * takes secrets on **stdin**, never on the command line.
 
 ## Configuration
@@ -224,6 +235,10 @@ The helper is not a generic root tool. It:
 | `MARKER` | LUKS2 label that identifies managed volumes (default `PENDRIVE_VAULT`) |
 | `UUID` | optional; restrict management to one specific volume |
 | `MOUNT_NAME` | optional; force the folder name under `/run/media/<user>/` |
+
+Volumes added from the UI are listed one per line in
+`/etc/pendrive-vault.volumes` (root-owned). A volume is managed when it has the
+`MARKER` label, is pinned by `UUID=`, or appears in that file.
 
 ## Security model
 

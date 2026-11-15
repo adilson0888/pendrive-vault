@@ -32,8 +32,12 @@ The helper is intentionally not generic:
 * the only input is a volume UUID, and the helper re-validates it on every
   call: block device, LUKS2, LUKS2 label equal to `MARKER`, on a USB disk, and
   not the disk holding `/`;
-* only four actions exist: `list`, `unlock-fido2`, `unlock-passphrase`,
-  `lock`;
+* only five actions exist: `list`, `adopt`, `unlock-fido2`,
+  `unlock-passphrase`, `lock`;
+* `adopt` can only add a volume that already passes the USB/LUKS2/root-disk
+  checks to the root-owned `/etc/pendrive-vault.volumes` list. It grants no
+  access by itself — unlocking still needs the key or the passphrase — it only
+  says "this device may be offered in the UI";
 * it mounts with `umask=077` and ownership of the calling user;
 * the mount point is derived from the inner filesystem label with a
   conservative character set (leading dots stripped), and it refuses to mount
