@@ -1,0 +1,250 @@
+# Pendrive Vault
+
+A small GTK4 front-end for **LUKS2 USB volumes** that unlock either with a
+**FIDO2 security key** (PIN + touch) or with a **passphrase**, and then open in
+your normal file manager.
+
+```text
+  ┌────────────────────────────────────┐
+  │  Pendrive Vault                    │
+  │  ┌──────────────────────────────┐  │
+  │  │ Locked                       │  │
+  │  │ USB volume · 7.6 GiB ·       │  │
+  │  │ security key detected        │  │
+  │  └──────────────────────────────┘  │
+  │   Unlock with FIDO2 key            │
+  │   Unlock with passphrase           │
+  │   [ Open folder ]      [ Lock ]    │
+  └────────────────────────────────────┘
+```
+
+## Why this exists
+
+Linux desktops cannot unlock a FIDO2-protected LUKS2 volume from a GUI.
+GNOME Disks, KDE Disks and Dolphin all go through **udisks**, and udisks only
+supports passphrases and key files — LUKS2 *tokens* (FIDO2, TPM2, PKCS#11) are
+not implemented ([udisks#1317](https://github.com/storaged-project/udisks/issues/1317),
+still open as of udisks 2.12).
+
+So the only way to use a security key is the command line:
+
+```bash
+sudo cryptsetup open --token-type systemd-fido2 /dev/disk/by-uuid/… vault
+sudo mount -o uid=$(id -u),gid=$(id -g) /dev/mapper/vault /mnt/vault
+```
+
+Pendrive Vault wraps exactly that — and nothing more. It is a thin, readable
+GUI over the official `cryptsetup`/systemd token path, with a small polkit
+helper that runs the privileged bits.
+
+## Features
+
+* **Volume discovery** — no UUID baked in: every USB LUKS2 partition whose
+  LUKS2 label is `PENDRIVE_VAULT` is offered, automatically, as it is plugged
+  in.
+* **Several volumes at once** — a selector appears when more than one is
+  attached.
+* Unlock with a **FIDO2 key**: FIDO2 PIN + physical touch, via
+  `systemd-fido2` LUKS2 tokens (hmac-secret is never re-implemented).
+* Unlock with the **passphrase** keyslot, for when the key is not at hand.
+* Clear **“👉 TOUCH YOUR SECURITY KEY NOW”** cue — the prompt cryptsetup
+  normally hides inside a terminal.
+* Mounts with your own `uid`/`gid` (`umask=077`) and opens the mounted folder
+  in your file manager.
+* One-click **Lock** (unmount + `cryptsetup close`, with stale-mapping
+  recovery if the stick was yanked).
+* Collapsible **Details** panel with cryptsetup's real output; the last run is
+  also logged to `/run/pendrive-vault/last.log`.
+
+## Requirements
+
+| Component | Notes |
+|---|---|
+| Linux + systemd ≥ 248 | for `systemd-fido2` LUKS2 tokens |
+| cryptsetup ≥ 2.7 | with `libcryptsetup-token-systemd-fido2.so` present |
+| libfido2 | token communication |
+| Python 3 + PyGObject + GTK 4 | the GUI |
+| polkit | privileged helper (`pkexec`) |
+| `fido2-token` | optional, only for the “key detected” indicator |
+
+```bash
+# Arch / CachyOS
+sudo pacman -S python-gobject gtk4 cryptsetup libfido2 polkit
+
+# Fedora
+sudo dnf install python3-gobject gtk4 cryptsetup libfido2 polkit
+
+# Debian / Ubuntu
+sudo apt install python3-gi gir1.2-gtk-4.0 cryptsetup-bin libfido2-1 policykit-1
+```
+
+## Install
+
+```bash
+git clone https://github.com/<you>/pendrive-vault.git
+cd pendrive-vault
+sudo ./install.sh
+```
+
+Then mark the volumes you want it to manage — this writes only the LUKS2 label
+in the header, no re-encryption, volume closed:
+
+```bash
+sudo cryptsetup config --label PENDRIVE_VAULT /dev/sdb2
+```
+
+Launch **Pendrive Vault** from the application menu, or run `pendrive-vault`.
+
+Uninstall with `sudo ./uninstall.sh` (add `--purge` to drop the config).
+
+## Preparing a volume
+
+```bash
+# 1. LUKS2 container (FAT32 inside, as an example)
+sudo cryptsetup luksFormat --type luks2 --label PENDRIVE_VAULT /dev/sdb2
+sudo cryptsetup open /dev/sdb2 vault
+sudo mkfs.vfat -F 32 -n DATA /dev/mapper/vault
+sudo cryptsetup close vault
+
+# 2. enroll the FIDO2 key — the passphrase keyslot stays as your fallback
+sudo systemd-cryptenroll --fido2-device=auto \
+     --fido2-with-client-pin=yes --fido2-with-user-presence=yes /dev/sdb2
+
+# 3. nothing else: the label is the marker, the app finds it
+```
+
+Check it worked:
+
+```bash
+sudo cryptsetup luksDump /dev/sdb2 | sed -n '/Tokens:/,$p'
+# 0: systemd-fido2
+```
+
+> Keep the passphrase keyslot. It is what saves you when the key is lost,
+> broken, or reset — a FIDO2 factory reset destroys the credential.
+
+## Usage
+
+| Action | What happens |
+|---|---|
+| **Unlock with FIDO2 key** | asks for the FIDO2 PIN, shows `TOUCH YOUR SECURITY KEY NOW`, unlocks, mounts, opens the folder |
+| **Unlock with passphrase** | asks for the passphrase, unlocks, mounts, opens the folder |
+| **Lock** | unmounts and closes the mapping |
+| **Details** | live cryptsetup output, for troubleshooting |
+
+The state reloads itself every 1.5 s, so plugging a volume in or out needs no
+interaction. With several volumes attached, pick one in the drop-down.
+
+The mount point is `/run/media/<user>/<filesystem-label>` (so a FAT32 label
+`DATA` gives `/run/media/<user>/DATA`), falling back to `VAULT` when the
+inner filesystem has no label.
+
+## How it works
+
+```text
+pendrive-vault (GTK4, your user)
+   │  pkexec                      ← only to list/validate/unlock/mount
+   ▼
+pendrive-vault-helper (root, polkit org.pendrivevault.unlock)
+   ├─ discovery: lsblk → USB partitions with FSTYPE=crypto_LUKS
+   │             + LUKS2 label == MARKER + not the running system disk
+   ├─ passphrase:  cryptsetup open --key-file - <uuid> pv-<uuid8>
+   └─ FIDO2:       pendrive-vault-token (pty driver)
+                      └─ cryptsetup open --token-only <uuid> pv-<uuid8>
+   └─ mount -o uid=…,gid=…,umask=077  →  /run/media/<user>/<label>
+```
+
+The GUI's own probe (unprivileged `lsblk`) is only used to notice plug/unplug
+events; the helper is authoritative because reading LUKS2 labels needs root,
+and it re-validates every target on every call.
+
+### Two implementation details worth knowing
+
+**1. Why a pseudo-terminal driver is needed.**
+`cryptsetup` prompts for the token PIN on a terminal and opens that prompt with
+`TCSAFLUSH`, which *discards anything already queued*. Feeding the PIN through
+a pipe (as `script(1)` would) makes cryptsetup read EOF and abort with
+`Error reading passphrase from terminal.` — the PIN never reaches the token, so
+the key never blinks. `src/pendrive-vault-token` runs cryptsetup on a real pty,
+waits for the prompt, and only then writes the PIN, keeping the terminal
+attached while cryptsetup waits for the touch.
+
+**2. Why the passphrase read ignores `read`'s exit status.**
+Bash's `read` returns non-zero at EOF even when it has assigned a value.
+`IFS= read -r PASS || PASS=""` therefore silently truncates a passphrase that
+arrives without a trailing newline, and cryptsetup reports
+`Nothing to read on input.`
+
+### Deliberately narrow privilege
+
+The helper is not a generic root tool. It:
+
+* reads a **root-owned** config (`/etc/pendrive-vault.conf`), so an unprivileged
+  user cannot point it at another device;
+* accepts only a UUID argument and then re-validates it: must be a block
+  device, LUKS2, labelled with `MARKER`, on a USB disk, and must not hold the
+  running root filesystem;
+* offers only four actions (`list`, `unlock-fido2`, `unlock-passphrase`,
+  `lock`);
+* takes secrets on **stdin**, never on the command line.
+
+## Configuration
+
+`/etc/pendrive-vault.conf` (written by `install.sh`):
+
+| Key | Meaning |
+|---|---|
+| `MARKER` | LUKS2 label that identifies managed volumes (default `PENDRIVE_VAULT`) |
+| `UUID` | optional; restrict management to one specific volume |
+| `MOUNT_NAME` | optional; force the folder name under `/run/media/<user>/` |
+
+## Security model
+
+* Encryption is standard LUKS2 (`aes-xts-plain64`, argon2id) — this project
+  adds no cryptography of its own.
+* The FIDO2 PIN is passed to the key and never stored; the LUKS key is derived
+  from the token's `hmac-secret` output.
+* The **label is a selector, not an authenticator**. Anyone can label a LUKS2
+  volume `PENDRIVE_VAULT`; the security still comes from the keyslots.
+* The polkit policy uses `allow_active=yes`, so mounting does not require an
+  admin password. Unlocking still requires the token (+PIN) or the passphrase.
+  Change `allow_active` to `auth_admin_keep` in the installed policy if you
+  prefer an explicit authorization prompt.
+* The volume is mounted under `/run/media/<user>/…` with `umask=077`.
+
+See [SECURITY.md](SECURITY.md) for the threat model and how to report issues.
+
+## Limitations
+
+* **Linux + systemd only.** The FIDO2 token format is systemd's; Windows and
+  macOS cannot use it (the passphrase still works there, with any LUKS-capable
+  tool).
+* No boot-time/auto unlock: this is for plugging a stick in and unlocking on
+  demand.
+* The file browser is your desktop's, not built in.
+* Tested on Arch/CachyOS with COSMIC, using FIDO2 keys that implement
+  `hmac-secret`; other distributions and tokens should work but are untested.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| *No vault volume detected* | wrong/missing LUKS2 label — see `cryptsetup config --label`; or the volume is not on a USB disk |
+| *The security key did not unlock the volume* | wrong PIN, or the key was not touched within ~30 s |
+| *security key not detected* | key not plugged in, or `fido2-token -L` cannot see it |
+| *Wrong passphrase* | keyslot mismatch — verify with `cryptsetup open --test-passphrase <device>` |
+| *The volume is already unlocked* | a mapping exists; press **Lock**, or `cryptsetup close pv-<uuid8>` |
+| *That device is not a Pendrive Vault volume* | the helper refused it: label mismatch, not USB, or it holds `/` |
+
+The log at `/run/pendrive-vault/last.log` contains the exact cryptsetup output of the
+last operation.
+
+## Contributing
+
+Issues and pull requests are welcome. The code is intentionally small: one GUI
+file, one pty driver, one shell helper. Keep the privileged surface narrow and
+the GUI free of crypto.
+
+## License
+
+GPL-3.0-or-later — see [LICENSE](LICENSE).

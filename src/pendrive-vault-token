@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Run `cryptsetup open --token-only` on a pseudo-terminal, answering the
+FIDO2 PIN prompt at the right moment.
+
+Why this exists
+---------------
+cryptsetup opens its PIN prompt after flushing the terminal input queue
+(TCSAFLUSH). Anything written before that moment is silently discarded, and a
+pipe that has already reached EOF makes the read fail with
+
+    Error reading passphrase from terminal.
+
+So the PIN has to be written *after* the prompt is printed, on a terminal that
+stays open while cryptsetup waits for the user to touch the token. That is what
+this wrapper does.
+
+Interface
+---------
+stdin:  one line, the FIDO2 PIN
+argv:   <device> <mapper-name>
+exit:   cryptsetup's exit status
+"""
+from __future__ import annotations
+
+import fcntl
+import os
+import pty
+import select
+import subprocess
+import sys
+import termios
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 3:
+        print("usage: pendrive-vault-token <device> <mapper-name>",
+              file=sys.stderr)
+        return 2
+    device, name = argv[1], argv[2]
+    pin = sys.stdin.readline().rstrip("\n")
+    secret = pin.encode()
+    # cryptsetup disables terminal echo before reading the PIN, but that is a
+    # property of the child, not a guarantee. Everything this wrapper prints is
+    # streamed into the GUI and appended to a log file, so scrub the PIN from
+    # the output defensively; hold back len(secret)-1 bytes so a PIN split
+    # across two reads is still caught.
+    hold = max(len(secret) - 1, 0)
+    mask = b"*" * len(secret)
+
+    def scrub(data: bytes) -> bytes:
+        return data.replace(secret, mask) if secret else data
+
+    master, slave = pty.openpty()
+    # Never rely on the child to turn echo off before reading the PIN: switch it
+    # off on the pty ourselves, before cryptsetup even starts.
+    try:
+        attrs = termios.tcgetattr(slave)
+        attrs[3] &= ~termios.ECHO
+        termios.tcsetattr(slave, termios.TCSANOW, attrs)
+    except termios.error:
+        pass
+
+    def child_setup() -> None:
+        os.setsid()
+        fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+
+    proc = subprocess.Popen(
+        ["cryptsetup", "open", "--token-only", device, name],
+        stdin=slave, stdout=slave, stderr=slave,
+        preexec_fn=child_setup, close_fds=True)
+    os.close(slave)
+
+    buffered = b""
+    pending = b""
+    pin_sent = False
+    while True:
+        running = proc.poll() is None
+        try:
+            ready, _, _ = select.select([master], [], [], 1.0)
+        except InterruptedError:
+            continue
+        if ready:
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                chunk = b""
+            if chunk:
+                pending += chunk
+                pending = scrub(pending)   # mask complete matches before splitting
+                if len(pending) > hold:
+                    emit, pending = (pending[:-hold], pending[-hold:]) if hold \
+                        else (pending, b"")
+                    sys.stdout.write(emit.decode(errors="replace"))
+                    sys.stdout.flush()
+                buffered += chunk
+                if not pin_sent and b"PIN" in buffered:
+                    os.write(master, (pin + "\n").encode())
+                    pin_sent = True
+                continue
+            if not running:
+                break
+            break  # EOF from the child while it is still alive
+        if not running:
+            break
+
+    if pending:
+        sys.stdout.write(scrub(pending).decode(errors="replace"))
+        sys.stdout.flush()
+
+    rc = proc.wait()
+    try:
+        os.close(master)
+    except OSError:
+        pass
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

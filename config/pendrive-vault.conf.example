@@ -1,0 +1,14 @@
+# Pendrive Vault configuration — installed to /etc/pendrive-vault.conf
+#
+# MARKER      LUKS2 label that marks a volume as managed by Pendrive Vault.
+#             Set it with:  sudo cryptsetup config --label PENDRIVE_VAULT /dev/sdX2
+#             Any USB LUKS2 partition carrying this label is offered in the GUI.
+#
+# UUID        Optional. Restrict management to one specific volume (useful if
+#             you keep several identical sticks or do not want to relabel).
+#
+# MOUNT_NAME  Optional. Force the folder name under /run/media/<user>/.
+#             When unset, the inner filesystem label is used (e.g. DATA).
+MARKER=PENDRIVE_VAULT
+#UUID=00000000-0000-0000-0000-000000000000
+#MOUNT_NAME=DATA

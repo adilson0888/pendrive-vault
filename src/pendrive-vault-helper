@@ -1,0 +1,230 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# pendrive-vault-helper - privileged backend for the Pendrive Vault GUI.
+#
+# Volumes are discovered by their LUKS2 label (MARKER in
+# /etc/pendrive-vault.conf), restricted to USB devices that do not hold the
+# running system. Every action re-validates the target from scratch, so the
+# GUI cannot talk this helper into touching an unrelated device.
+#
+# Usage:
+#   pendrive-vault-helper list
+#   pendrive-vault-helper unlock-fido2      <uuid>
+#   pendrive-vault-helper unlock-passphrase <uuid>
+#   pendrive-vault-helper lock              <uuid>
+#
+# Secrets are read from stdin, never from argv.
+#
+set -euo pipefail
+
+CONFIG="/etc/pendrive-vault.conf"   # root-owned, never taken from the environment
+LOG_DIR="/run/pendrive-vault"
+LOG="${LOG_DIR}/last.log"   # root-owned dir: cannot be pre-created as a symlink
+TOKEN_DRIVER="/usr/local/libexec/pendrive-vault-token"
+
+err() { echo "ERR:$*"; exit "${2:-1}"; }
+[ "$(id -u)" -eq 0 ] || err "not-root 3"
+
+ACTION="${1:-}"
+
+[ -r "$CONFIG" ] || err "not-configured 20"
+# shellcheck disable=SC1090
+. "$CONFIG"
+
+MARKER="${MARKER:-PENDRIVE_VAULT}"
+PIN_UUID="${UUID:-}"                # optional: restrict to one volume
+MOUNT_BASE_NAME="${MOUNT_NAME:-}"   # optional: force the folder name
+
+UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+[[ "$MARKER" =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || err "bad-config-marker 21"
+[ -z "$PIN_UUID" ] || [[ "$PIN_UUID" =~ $UUID_RE ]] || err "bad-config-uuid 21"
+
+CALLER="${PKEXEC_UID:-${SUDO_UID:-}}"
+[[ "$CALLER" =~ ^[0-9]+$ ]] || err "no-caller 4"
+USER_NAME="$(id -un "$CALLER")" || err "bad-caller 4"
+USER_GID="$(id -gn "$CALLER")"
+USER_GIDNUM="$(id -g "$CALLER")"
+
+mkdir -p "$LOG_DIR"
+chmod 0755 "$LOG_DIR"
+: > "$LOG"
+chmod 644 "$LOG"
+echo "== $ACTION ${2:-} $(date -Is)" >> "$LOG"
+
+# ---------------------------------------------------------------- helpers ---
+mapper_for() { echo "pv-${1:0:8}"; }
+
+luks_field() {  # $1=device  $2=field name ("Label", "Version")
+  cryptsetup luksDump "$1" 2>/dev/null \
+    | awk -v f="^$2:" '$0 ~ f { sub(f "[ \t]*", ""); print; exit }'
+}
+
+is_usb() {
+  local disk
+  disk="$(lsblk -no PKNAME "$1" 2>/dev/null | head -1)"
+  [ -n "$disk" ] || return 1
+  [ "$(lsblk -no TRAN "/dev/$disk" 2>/dev/null | head -1)" = "usb" ]
+}
+
+holds_root() {
+  local disk root_src root_disk
+  disk="$(lsblk -no PKNAME "$1" 2>/dev/null | head -1)"
+  root_src="$(findmnt -no SOURCE / 2>/dev/null || true)"
+  root_src="${root_src%%[*}"          # btrfs reports /dev/sda2[/@]; drop the subvol
+  [ -n "$root_src" ] && [ -n "$disk" ] || return 1
+  root_disk="$(lsblk -no PKNAME "$root_src" 2>/dev/null | head -1)"
+  [ -n "$root_disk" ] && [ "$root_disk" = "$disk" ]
+}
+
+# Does this partition look like one of *our* volumes?
+matches_marker() {
+  local dev="$1" uuid
+  uuid="$(blkid -s UUID -o value "$dev" 2>/dev/null || true)"
+  [ -n "$uuid" ] || return 1
+  [ -z "$PIN_UUID" ] || [ "$PIN_UUID" = "$uuid" ] || return 1
+  cryptsetup isLuks "$dev" 2>/dev/null || return 1
+  [ "$(luks_field "$dev" Version)" = "2" ] || return 1
+  [ "$(luks_field "$dev" Label)" = "$MARKER" ] || return 1
+  is_usb "$dev" || return 1
+  holds_root "$dev" && return 1
+  return 0
+}
+
+candidates() {
+  # lsblk -P emits: NAME="sda2" TYPE="part" FSTYPE="crypto_LUKS"
+  # Splitting on '"' makes the values $2, $4, $6 — robust against the
+  # "TYPE=" substring inside "FSTYPE=".
+  lsblk -Pno NAME,TYPE,FSTYPE 2>/dev/null \
+    | awk -F'"' '$4 == "part" && $6 == "crypto_LUKS" { print "/dev/" $2 }'
+}
+
+mountpoint_of() {  # $1=mapper
+  findmnt -no TARGET "/dev/mapper/$1" 2>/dev/null | head -1 || true
+}
+
+mountpoint_for() {  # $1=mapper  $2=uuid
+  local name path
+  if [ -n "$MOUNT_BASE_NAME" ]; then
+    name="$MOUNT_BASE_NAME"
+  else
+    name="$(blkid -s LABEL -o value "/dev/mapper/$1" 2>/dev/null || true)"
+    [ -n "$name" ] || name="VAULT"
+  fi
+  # A crafted filesystem label must not be able to escape /run/media/<user>:
+  # keep a conservative charset and strip leading dots (defeats "." and "..").
+  name="$(printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '_' | sed 's/^[.]*//')"
+  [ -n "$name" ] || name="VAULT"
+
+  path="/run/media/${USER_NAME}/${name}"
+  if findmnt -no TARGET "$path" >/dev/null 2>&1 \
+     && [ "$(findmnt -no SOURCE "$path")" != "/dev/mapper/$1" ]; then
+    path="${path}-${2:0:8}"
+  fi
+  printf '%s\n' "$path"
+}
+
+do_mount() {  # $1=mapper  $2=uuid ; sets MOUNTPOINT
+  local mnt
+  mnt="$(mountpoint_for "$1" "$2")"
+  # /run/media/<user> is writable by the user: never mount over a symlink.
+  [ -L "$mnt" ] && err "mount-target-symlink 24"
+  mkdir -p "$mnt"
+  [ -L "$mnt" ] && err "mount-target-symlink 24"
+  chown "${CALLER}:${USER_GID}" "$mnt" 2>/dev/null || true
+  mount -o "uid=${CALLER},gid=${USER_GIDNUM},umask=077" "/dev/mapper/$1" "$mnt" 2>&1 \
+    | tee -a "$LOG"
+  MOUNTPOINT="$mnt"
+}
+
+# --------------------------------------------------------------- providers ---
+# Sets DEV. Errors out (with a message on stdout) if the target is not a valid
+# vault volume, so the caller must use it directly rather than in $(...).
+resolve_validated() {
+  local uuid="${1:-}"
+  [[ "$uuid" =~ $UUID_RE ]] || err "bad-uuid 22"
+  DEV="/dev/disk/by-uuid/${uuid}"
+  [ -b "$DEV" ] || err "device-not-found 10"
+  matches_marker "$DEV" || err "not-a-vault 23"
+}
+
+# The two unlock providers set DEV/MAPPER and perform the cryptsetup call.
+open_fido2() {
+  local pin="$1"
+  echo "STEP:waiting-for-token" | tee -a "$LOG"
+  set +e
+  printf '%s\n' "$pin" | "$TOKEN_DRIVER" "$DEV" "$MAPPER" 2>&1 | tee -a "$LOG"
+  local rc=${PIPESTATUS[1]}
+  set -e
+  [ "$rc" -eq 0 ] || err "fido2-failed 12"
+}
+
+open_passphrase() {
+  local pass="$1"
+  set +e
+  printf '%s' "$pass" | cryptsetup open --key-file - "$DEV" "$MAPPER" 2>&1 | tee -a "$LOG"
+  local rc=${PIPESTATUS[1]}
+  set -e
+  [ "$rc" -eq 0 ] || err "passphrase-failed 14"
+}
+
+finish_open() {
+  [ -b "/dev/mapper/${MAPPER}" ] || err "open-failed 17"
+  if ! do_mount "$MAPPER" "$UUID_ARG"; then
+    cryptsetup close "$MAPPER" 2>/dev/null || true
+    err "mount-failed 13"
+  fi
+  echo "ok:${MOUNTPOINT}"
+}
+
+# ------------------------------------------------------------------ actions ---
+case "$ACTION" in
+  list)
+    while read -r dev; do
+      [ -n "$dev" ] || continue
+      matches_marker "$dev" || continue
+      uuid="$(blkid -s UUID -o value "$dev")"
+      mapper="$(mapper_for "$uuid")"
+      mnt="$(mountpoint_of "$mapper")"
+      if [ -n "$mnt" ]; then state="mounted"
+      elif [ -b "/dev/mapper/${mapper}" ]; then state="unlocked"
+      else state="locked"
+      fi
+      printf '%s\t%s\t%s\t%s\n' "$uuid" "$dev" "$state" "$mnt"
+    done < <(candidates)
+    ;;
+
+  unlock-fido2|unlock-passphrase)
+    UUID_ARG="${2:-}"
+    resolve_validated "$UUID_ARG"
+    MAPPER="$(mapper_for "$UUID_ARG")"
+    [ -b "/dev/mapper/${MAPPER}" ] && err "already-unlocked 11"
+
+    if [ "$ACTION" = "unlock-fido2" ]; then
+      IFS= read -r SECRET || :
+      open_fido2 "$SECRET"
+    else
+      # read returns non-zero at EOF even when it assigned a value; do not
+      # discard the passphrase because of that.
+      IFS= read -r SECRET || :
+      open_passphrase "$SECRET"
+    fi
+    finish_open
+    ;;
+
+  lock)
+    uuid="${2:-}"
+    [[ "$uuid" =~ $UUID_RE ]] || err "bad-uuid 22"
+    mapper="$(mapper_for "$uuid")"
+    mnt="$(mountpoint_of "$mapper")"
+    if [ -n "$mnt" ]; then umount "$mnt" || err "umount-failed 15"; fi
+    if [ -b "/dev/mapper/${mapper}" ]; then
+      cryptsetup close "$mapper" 2>/dev/null || dmsetup remove -f "$mapper" 2>/dev/null || err "close-failed 16"
+    fi
+    echo "ok:locked"
+    ;;
+
+  *)
+    err "bad-action 2"
+    ;;
+esac

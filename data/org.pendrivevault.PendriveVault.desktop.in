@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Pendrive Vault
+GenericName=Encrypted USB volume
+Comment=Unlock an encrypted USB volume with a FIDO2 key or a passphrase
+Exec=@BINDIR@/pendrive-vault
+Icon=pendrive-vault
+Terminal=false
+Categories=System;Security;
+Keywords=luks;crypt;usb;fido2;security key;encrypted;vault;passphrase;
+StartupNotify=true
