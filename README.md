@@ -97,11 +97,11 @@ sudo apt install python3-gi gir1.2-gtk-4.0 cryptsetup-bin libfido2-1 policykit-1
 From a release (recommended — the tarball is checksummed):
 
 ```bash
-curl -fsSLO https://github.com/adilson0888/pendrive-vault/releases/download/v0.1.0/pendrive-vault-0.1.0.tar.gz
-curl -fsSLO https://github.com/adilson0888/pendrive-vault/releases/download/v0.1.0/SHA256SUMS
+curl -fsSLO https://github.com/adilson0888/pendrive-vault/releases/download/v0.2.0/pendrive-vault-0.2.0.tar.gz
+curl -fsSLO https://github.com/adilson0888/pendrive-vault/releases/download/v0.2.0/SHA256SUMS
 sha256sum -c SHA256SUMS --ignore-missing
-tar xf pendrive-vault-0.1.0.tar.gz
-sudo ./pendrive-vault-0.1.0/install.sh
+tar xf pendrive-vault-0.2.0.tar.gz
+sudo ./pendrive-vault-0.2.0/install.sh
 ```
 
 Or from git, if you want to follow `main`:
