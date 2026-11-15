@@ -127,7 +127,7 @@ sudo cryptsetup luksDump /dev/sdb2 | sed -n '/Tokens:/,$p'
 
 | Action | What happens |
 |---|---|
-| **Unlock with FIDO2 key** | asks for the FIDO2 PIN, shows `TOUCH YOUR SECURITY KEY NOW`, unlocks, mounts, opens the folder |
+| **Unlock with FIDO2 key** | waits for the key if it isn't plugged in, asks for the FIDO2 PIN, shows `TOUCH YOUR SECURITY KEY NOW`, unlocks, mounts, opens the folder |
 | **Unlock with passphrase** | asks for the passphrase, unlocks, mounts, opens the folder |
 | **Lock** | unmounts and closes the mapping |
 | **Details** | live cryptsetup output, for troubleshooting |

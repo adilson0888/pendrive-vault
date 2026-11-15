@@ -32,8 +32,9 @@ FIELD_RE = re.compile(r'(\w+)="([^"]*)"')
 ERRORS = {
     "device-not-found": "The pendrive is not plugged in.",
     "already-unlocked": "The volume is already unlocked.",
-    "fido2-failed": "The security key did not unlock the volume.\n"
-                    "Check the PIN, and touch the key when it blinks.",
+    "fido2-failed": "The security key did not unlock the volume.\n\n"
+                    "Check the PIN, and touch the key promptly when it blinks\n"
+                    "(the key stops waiting after about 30 seconds).",
     "passphrase-failed": "Wrong passphrase.",
     "mount-failed": "Unlocked, but mounting the filesystem failed.",
     "umount-failed": "Could not unmount — a file may still be open in another app.",
@@ -409,13 +410,65 @@ class Window(Gtk.ApplicationWindow):
         vol = self.selected()
         if not vol:
             return
+        if key_present():
+            self._ask_pin(vol)
+        else:
+            self._await_key(lambda: self._ask_pin(vol))
 
+    def _ask_pin(self, vol: Volume):
         def go(pin: str):
-            self._run("unlock-fido2", vol.uuid, pin + "\n", "Verifying PIN with the key…")
+            self._run("unlock-fido2", vol.uuid, pin + "\n",
+                      "Verifying PIN with the key…")
 
         self.ask("FIDO2 key",
                  "Enter the FIDO2 PIN for your security key.\n"
-                 "The key will blink — touch it when it does.", go)
+                 "Once accepted, the key blinks — touch it within about 30 seconds.", go)
+
+    def _await_key(self, then):
+        """Ask for the security key *before* the PIN, and wait until it appears."""
+        win = Gtk.Window(transient_for=self, modal=True, title="Security key needed")
+        win.set_resizable(False)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        for edge in ("top", "bottom", "start", "end"):
+            getattr(box, f"set_margin_{edge}")(18)
+        win.set_child(box)
+
+        title = Gtk.Label(label="Plug in your security key", xalign=0)
+        title.add_css_class("title-3")
+        sub = Gtk.Label(label="Waiting for a FIDO2 key to appear…", xalign=0)
+        sub.add_css_class("dim-label")
+        sub.set_wrap(True)
+        row = Gtk.Box(spacing=10)
+        spinner = Gtk.Spinner()
+        spinner.start()
+        row.append(spinner)
+        cancel = Gtk.Button(label="Cancel", halign=Gtk.Align.END)
+        box.append(title)
+        box.append(sub)
+        box.append(row)
+        box.append(cancel)
+
+        state = {"alive": True}
+
+        def stop():
+            state["alive"] = False
+            win.destroy()
+
+        def poll():
+            if not state["alive"]:
+                return False
+            if key_present():
+                state["alive"] = False
+                spinner.stop()
+                win.destroy()
+                then()
+                return False
+            return True
+
+        cancel.connect("clicked", lambda *_: stop())
+        win.connect("close-request", lambda *_: (stop(), False)[1])
+        win.present()
+        GLib.timeout_add(400, poll)
 
     def on_pass(self, *_):
         vol = self.selected()

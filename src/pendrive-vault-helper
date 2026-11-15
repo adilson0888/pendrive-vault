@@ -48,7 +48,16 @@ USER_GIDNUM="$(id -g "$CALLER")"
 
 mkdir -p "$LOG_DIR"
 chmod 0755 "$LOG_DIR"
-: > "$LOG"
+# `list` is polled by the GUI, so it must never wipe the log of a real
+# operation; only unlock/lock start a fresh log. Cap the size as well.
+case "$ACTION" in
+  list) ;;
+  *) : > "$LOG" ;;
+esac
+[ -f "$LOG" ] || : > "$LOG"
+if [ "$(stat -c%s "$LOG" 2>/dev/null || echo 0)" -gt 262144 ]; then
+  tail -c 131072 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+fi
 chmod 644 "$LOG"
 echo "== $ACTION ${2:-} $(date -Is)" >> "$LOG"
 

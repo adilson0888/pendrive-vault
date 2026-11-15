@@ -23,6 +23,7 @@ exit:   cryptsetup's exit status
 """
 from __future__ import annotations
 
+import datetime
 import fcntl
 import os
 import pty
@@ -32,6 +33,18 @@ import sys
 import termios
 
 
+DEBUG_LOG = "/run/pendrive-vault/token-debug.log"
+
+
+def dbg(message: str) -> None:
+    """Timing trace for troubleshooting. Never logs the PIN itself."""
+    try:
+        with open(DEBUG_LOG, "a", encoding="utf-8") as fh:
+            fh.write(f"{datetime.datetime.now().isoformat(timespec='seconds')} {message}\n")
+    except OSError:
+        pass
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 3:
         print("usage: pendrive-vault-token <device> <mapper-name>",
@@ -39,6 +52,7 @@ def main(argv: list[str]) -> int:
         return 2
     device, name = argv[1], argv[2]
     pin = sys.stdin.readline().rstrip("\n")
+    dbg(f"start device={device} name={name} pin_len={len(pin)}")
     secret = pin.encode()
     # cryptsetup disables terminal echo before reading the PIN, but that is a
     # property of the child, not a guarantee. Everything this wrapper prints is
@@ -95,6 +109,7 @@ def main(argv: list[str]) -> int:
                     sys.stdout.flush()
                 buffered += chunk
                 if not pin_sent and b"PIN" in buffered:
+                    dbg("prompt-seen, sending PIN")
                     os.write(master, (pin + "\n").encode())
                     pin_sent = True
                 continue
@@ -109,6 +124,7 @@ def main(argv: list[str]) -> int:
         sys.stdout.flush()
 
     rc = proc.wait()
+    dbg(f"child-exit rc={rc} pin_sent={pin_sent}")
     try:
         os.close(master)
     except OSError:
