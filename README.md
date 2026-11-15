@@ -111,7 +111,7 @@ sudo ./install.sh
 ```
 
 Then mark the volumes you want it to manage — this writes only the LUKS2 label
-in the header, no re-encryption, volume closed:
+in the header — no re-encryption, and the encrypted payload is untouched:
 
 ```bash
 sudo cryptsetup config --label PENDRIVE_VAULT /dev/sdb2

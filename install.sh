@@ -99,7 +99,7 @@ if [ -z "$DESTDIR" ]; then
   echo
   echo "Volumes are detected by their LUKS2 label. Mark an existing volume with:"
   echo "   sudo cryptsetup config --label $MARKER /dev/sdX2"
-  echo "   (the volume must be closed; only header metadata changes)"
+  echo "   (header metadata only: no re-encryption, data area untouched)"
   [ -n "$PIN_UUID" ] && echo "Pinned to UUID: $PIN_UUID"
 
   echo
