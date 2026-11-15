@@ -1,5 +1,9 @@
 # Pendrive Vault
 
+[![CI](https://github.com/adilson0888/pendrive-vault/actions/workflows/ci.yml/badge.svg)](https://github.com/adilson0888/pendrive-vault/actions/workflows/ci.yml)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
+[![Platform: Linux](https://img.shields.io/badge/platform-Linux-informational.svg)](#requirements)
+
 A small GTK4 front-end for **LUKS2 USB volumes** that unlock either with a
 **FIDO2 security key** (PIN + touch) or with a **passphrase**, and then open in
 your normal file manager.
@@ -158,6 +162,9 @@ The GUI's own probe (unprivileged `lsblk`) is only used to notice plug/unplug
 events; the helper is authoritative because reading LUKS2 labels needs root,
 and it re-validates every target on every call.
 
+The full story (pty driving, validation, mount naming, failure modes) is in
+[docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
+
 ### Two implementation details worth knowing
 
 **1. Why a pseudo-terminal driver is needed.**
@@ -239,11 +246,38 @@ See [SECURITY.md](SECURITY.md) for the threat model and how to report issues.
 The log at `/run/pendrive-vault/last.log` contains the exact cryptsetup output of the
 last operation.
 
+## Testing
+
+```bash
+make test     # no hardware, no root needed for the driver tests
+make lint     # shellcheck + syntax checks
+make check    # both
+```
+
+The suite verifies the parts that are easy to get wrong: that the pty driver
+delivers the PIN only after the prompt, masks it in its output, disables
+terminal echo, waits for the child and propagates its exit code; and that the
+privileged helper rejects unknown actions, malformed UUIDs and unknown volumes
+with the documented exit codes. CI runs the same tests on every push.
+
+## Packaging
+
+* `install.sh` understands `DESTDIR` and `PREFIX`, so it can stage files into a
+  package root: `DESTDIR="$pkgdir" PREFIX=/usr ./install.sh`.
+* An AUR recipe lives in
+  [packaging/pendrive-vault-git/PKGBUILD](packaging/pendrive-vault-git/PKGBUILD).
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
 ## Contributing
 
 Issues and pull requests are welcome. The code is intentionally small: one GUI
 file, one pty driver, one shell helper. Keep the privileged surface narrow and
 the GUI free of crypto.
+
+Run `make check` before opening a pull request.
 
 ## License
 

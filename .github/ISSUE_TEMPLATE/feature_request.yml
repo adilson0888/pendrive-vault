@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest an improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the situation, not just the solution you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        Please keep in mind the project's scope: a small GUI over the official
+        `cryptsetup`/systemd token path, with a deliberately narrow privileged
+        helper. Changes that reimplement cryptography or widen the helper's
+        privileges are unlikely to be accepted.
