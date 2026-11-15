@@ -1,0 +1,33 @@
+# Maintainer: Adilson Souza <adilson0888@users.noreply.github.com>
+#
+# AUR recipe for the development version.
+#   git clone https://aur.archlinux.org/pendrive-vault-git.git
+#   cd pendrive-vault-git && makepkg -si
+#
+pkgname=pendrive-vault-git
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="GTK4 app to unlock a LUKS2 USB volume with a FIDO2 security key or a passphrase"
+arch=('any')
+url="https://github.com/adilson0888/pendrive-vault"
+license=('GPL-3.0-or-later')
+depends=('bash' 'python' 'python-gobject' 'gtk4' 'cryptsetup' 'libfido2'
+         'polkit' 'util-linux')
+optdepends=('fido2-tools: "security key detected" indicator in the GUI')
+provides=('pendrive-vault')
+conflicts=('pendrive-vault')
+backup=('etc/pendrive-vault.conf')
+source=("git+${url}.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "${srcdir}/pendrive-vault"
+  printf '0.1.0.r%s.g%s' \
+    "$(git rev-list --count HEAD)" \
+    "$(git rev-parse --short HEAD)"
+}
+
+package() {
+  cd "${srcdir}/pendrive-vault"
+  DESTDIR="${pkgdir}" PREFIX=/usr ./install.sh
+}

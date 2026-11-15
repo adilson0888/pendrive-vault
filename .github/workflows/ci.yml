@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -yqq shellcheck cryptsetup-bin util-linux
+
+      - name: Shell syntax
+        run: bash -n install.sh uninstall.sh src/pendrive-vault-helper tests/*.sh
+
+      - name: shellcheck
+        run: shellcheck -S warning install.sh uninstall.sh src/pendrive-vault-helper tests/*.sh
+
+      - name: Python syntax
+        run: python3 -m py_compile src/pendrive-vault src/pendrive-vault-token
+
+      - name: Templates render valid XML / desktop entries
+        run: |
+          sed 's|@LIBEXECDIR@|/usr/local/libexec|g' \
+            data/org.pendrivevault.unlock.policy.in > /tmp/policy.xml
+          python3 -c "import xml.dom.minidom as m; m.parse('/tmp/policy.xml')"
+          sed 's|@BINDIR@|/usr/local/bin|g' \
+            data/org.pendrivevault.PendriveVault.desktop.in > /tmp/app.desktop
+          grep -q '^\[Desktop Entry\]' /tmp/app.desktop
+          grep -q '^Exec=/usr/local/bin/pendrive-vault' /tmp/app.desktop
+
+      - name: Driver tests (no hardware needed)
+        run: ./tests/test-token-driver.sh
+
+      - name: Helper guard tests
+        run: sudo ./tests/test-helper-guards.sh
+
+      - name: Packaging install (DESTDIR staging)
+        run: |
+          DESTDIR="$PWD/stage" PREFIX=/usr ./install.sh
+          for f in usr/bin/pendrive-vault usr/libexec/pendrive-vault-helper \
+                   usr/libexec/pendrive-vault-token \
+                   usr/share/polkit-1/actions/org.pendrivevault.unlock.policy \
+                   usr/share/applications/org.pendrivevault.PendriveVault.desktop \
+                   usr/share/icons/hicolor/scalable/apps/pendrive-vault.svg \
+                   etc/pendrive-vault.conf; do
+            test -e "stage/$f" || { echo "missing: $f"; exit 1; }
+          done
+          grep -q '/usr/libexec/pendrive-vault-helper' \
+            stage/usr/share/polkit-1/actions/org.pendrivevault.unlock.policy
