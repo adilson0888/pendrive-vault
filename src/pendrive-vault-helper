@@ -24,11 +24,11 @@ LOG="${LOG_DIR}/last.log"   # root-owned dir: cannot be pre-created as a symlink
 TOKEN_DRIVER="/usr/local/libexec/pendrive-vault-token"
 
 err() { echo "ERR:$*"; exit "${2:-1}"; }
-[ "$(id -u)" -eq 0 ] || err "not-root 3"
+[ "$(id -u)" -eq 0 ] || err "not-root" 3
 
 ACTION="${1:-}"
 
-[ -r "$CONFIG" ] || err "not-configured 20"
+[ -r "$CONFIG" ] || err "not-configured" 20
 # shellcheck disable=SC1090
 . "$CONFIG"
 
@@ -37,12 +37,12 @@ PIN_UUID="${UUID:-}"                # optional: restrict to one volume
 MOUNT_BASE_NAME="${MOUNT_NAME:-}"   # optional: force the folder name
 
 UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-[[ "$MARKER" =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || err "bad-config-marker 21"
-[ -z "$PIN_UUID" ] || [[ "$PIN_UUID" =~ $UUID_RE ]] || err "bad-config-uuid 21"
+[[ "$MARKER" =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || err "bad-config-marker" 21
+[ -z "$PIN_UUID" ] || [[ "$PIN_UUID" =~ $UUID_RE ]] || err "bad-config-uuid" 21
 
 CALLER="${PKEXEC_UID:-${SUDO_UID:-}}"
-[[ "$CALLER" =~ ^[0-9]+$ ]] || err "no-caller 4"
-USER_NAME="$(id -un "$CALLER")" || err "bad-caller 4"
+[[ "$CALLER" =~ ^[0-9]+$ ]] || err "no-caller" 4
+USER_NAME="$(id -un "$CALLER")" || err "bad-caller" 4
 USER_GID="$(id -gn "$CALLER")"
 USER_GIDNUM="$(id -g "$CALLER")"
 
@@ -137,9 +137,9 @@ do_mount() {  # $1=mapper  $2=uuid ; sets MOUNTPOINT
   local mnt
   mnt="$(mountpoint_for "$1" "$2")"
   # /run/media/<user> is writable by the user: never mount over a symlink.
-  [ -L "$mnt" ] && err "mount-target-symlink 24"
+  [ -L "$mnt" ] && err "mount-target-symlink" 24
   mkdir -p "$mnt"
-  [ -L "$mnt" ] && err "mount-target-symlink 24"
+  [ -L "$mnt" ] && err "mount-target-symlink" 24
   chown "${CALLER}:${USER_GID}" "$mnt" 2>/dev/null || true
   mount -o "uid=${CALLER},gid=${USER_GIDNUM},umask=077" "/dev/mapper/$1" "$mnt" 2>&1 \
     | tee -a "$LOG"
@@ -151,10 +151,10 @@ do_mount() {  # $1=mapper  $2=uuid ; sets MOUNTPOINT
 # vault volume, so the caller must use it directly rather than in $(...).
 resolve_validated() {
   local uuid="${1:-}"
-  [[ "$uuid" =~ $UUID_RE ]] || err "bad-uuid 22"
+  [[ "$uuid" =~ $UUID_RE ]] || err "bad-uuid" 22
   DEV="/dev/disk/by-uuid/${uuid}"
-  [ -b "$DEV" ] || err "device-not-found 10"
-  matches_marker "$DEV" || err "not-a-vault 23"
+  [ -b "$DEV" ] || err "device-not-found" 10
+  matches_marker "$DEV" || err "not-a-vault" 23
 }
 
 # The two unlock providers set DEV/MAPPER and perform the cryptsetup call.
@@ -165,7 +165,7 @@ open_fido2() {
   printf '%s\n' "$pin" | "$TOKEN_DRIVER" "$DEV" "$MAPPER" 2>&1 | tee -a "$LOG"
   local rc=${PIPESTATUS[1]}
   set -e
-  [ "$rc" -eq 0 ] || err "fido2-failed 12"
+  [ "$rc" -eq 0 ] || err "fido2-failed" 12
 }
 
 open_passphrase() {
@@ -174,14 +174,14 @@ open_passphrase() {
   printf '%s' "$pass" | cryptsetup open --key-file - "$DEV" "$MAPPER" 2>&1 | tee -a "$LOG"
   local rc=${PIPESTATUS[1]}
   set -e
-  [ "$rc" -eq 0 ] || err "passphrase-failed 14"
+  [ "$rc" -eq 0 ] || err "passphrase-failed" 14
 }
 
 finish_open() {
-  [ -b "/dev/mapper/${MAPPER}" ] || err "open-failed 17"
+  [ -b "/dev/mapper/${MAPPER}" ] || err "open-failed" 17
   if ! do_mount "$MAPPER" "$UUID_ARG"; then
     cryptsetup close "$MAPPER" 2>/dev/null || true
-    err "mount-failed 13"
+    err "mount-failed" 13
   fi
   echo "ok:${MOUNTPOINT}"
 }
@@ -207,7 +207,7 @@ case "$ACTION" in
     UUID_ARG="${2:-}"
     resolve_validated "$UUID_ARG"
     MAPPER="$(mapper_for "$UUID_ARG")"
-    [ -b "/dev/mapper/${MAPPER}" ] && err "already-unlocked 11"
+    [ -b "/dev/mapper/${MAPPER}" ] && err "already-unlocked" 11
 
     if [ "$ACTION" = "unlock-fido2" ]; then
       IFS= read -r SECRET || :
@@ -223,17 +223,17 @@ case "$ACTION" in
 
   lock)
     uuid="${2:-}"
-    [[ "$uuid" =~ $UUID_RE ]] || err "bad-uuid 22"
+    [[ "$uuid" =~ $UUID_RE ]] || err "bad-uuid" 22
     mapper="$(mapper_for "$uuid")"
     mnt="$(mountpoint_of "$mapper")"
-    if [ -n "$mnt" ]; then umount "$mnt" || err "umount-failed 15"; fi
+    if [ -n "$mnt" ]; then umount "$mnt" || err "umount-failed" 15; fi
     if [ -b "/dev/mapper/${mapper}" ]; then
-      cryptsetup close "$mapper" 2>/dev/null || dmsetup remove -f "$mapper" 2>/dev/null || err "close-failed 16"
+      cryptsetup close "$mapper" 2>/dev/null || dmsetup remove -f "$mapper" 2>/dev/null || err "close-failed" 16
     fi
     echo "ok:locked"
     ;;
 
   *)
-    err "bad-action 2"
+    err "bad-action" 2
     ;;
 esac
